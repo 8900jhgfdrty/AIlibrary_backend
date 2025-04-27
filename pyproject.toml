@@ -1,0 +1,53 @@
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[tool.poetry]
+name = "library-management-system"
+version = "0.1.0"
+description = "Library Management System"
+authors = ["Library Team <example@example.com>"]
+readme = "README.md"
+license = "MIT"
+packages = [
+    {include = "api"},
+    {include = "utils"},
+    {include = "LibraryManagementSystem"}
+]
+
+[tool.poetry.dependencies]
+python = ">=3.8,<4.0"
+asgiref = ">=3.8.0"
+Django = ">=5.0.0"
+djangorestframework = ">=3.15.0"
+drf-yasg = ">=1.21.0"
+PyJWT = "*"
+django-filter = "*"
+scikit-learn = "*"
+pandas = "*"
+numpy = "*"
+matplotlib = "*"
+pmdarima = "*"
+seaborn = "*"
+statsmodels = "*"
+Pillow = "*"
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=7.0.0"
+black = "*"
+isort = "*" 
+[tool.pdm]
+distribution = true
+
+[project]
+name = "LibraryManagementSystem"
+version = "0.1.0"
+description = "Default template for PDM package"
+authors = [
+    {name = "", email = ""},
+]
+dependencies = []
+requires-python = ">=3.12"
+readme = "README.md"
+license = {text = "MIT"}
+

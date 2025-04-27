@@ -1,0 +1,29 @@
+[[source]]
+name = "pypi"
+url = "https://pypi.org/simple"
+verify_ssl = true
+
+[dev-packages]
+pytest = ">=7.0.0"
+black = "*"
+isort = "*"
+
+[packages]
+django = ">=5.0.0"
+djangorestframework = ">=3.15.0"
+drf-yasg = ">=1.21.0"
+PyJWT = "*"
+django-filter = "*"
+scikit-learn = "*"
+pandas = "*"
+numpy = "*"
+matplotlib = "*"
+pmdarima = "*"
+seaborn = "*"
+statsmodels = "*"
+pillow = "*"
+asgiref = ">=3.8.0"
+gunicorn = "*"
+
+[requires]
+python_version = "3.9" 

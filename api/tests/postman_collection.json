@@ -1,0 +1,571 @@
+{
+  "info": {
+    "name": "图书馆管理系统 API 测试",
+    "_postman_id": "c753d7ca-9bbd-4a0f-a7bc-2b92a568e7d8",
+    "description": "图书馆管理系统的API测试集合",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "用户管理",
+      "item": [
+        {
+          "name": "用户登录",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n\t\"username\": \"testuser\",\n\t\"password\": \"password123\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/token/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "token",
+                ""
+              ]
+            },
+            "description": "用户登录获取访问令牌"
+          },
+          "response": []
+        },
+        {
+          "name": "获取当前用户信息",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/users/me/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "me",
+                ""
+              ]
+            },
+            "description": "获取当前登录用户的信息"
+          },
+          "response": []
+        }
+      ],
+      "description": "用户相关的API测试"
+    },
+    {
+      "name": "图书管理",
+      "item": [
+        {
+          "name": "获取图书列表",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/books/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "books",
+                ""
+              ]
+            },
+            "description": "获取所有图书的列表"
+          },
+          "response": []
+        },
+        {
+          "name": "创建新图书",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n\t\"title\": \"测试图书\",\n\t\"author\": \"测试作者\",\n\t\"category\": \"小说\",\n\t\"description\": \"这是一本测试用的图书\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/books/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "books",
+                ""
+              ]
+            },
+            "description": "创建一本新图书（需要管理员权限）"
+          },
+          "response": []
+        },
+        {
+          "name": "获取图书详情",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/books/1/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "books",
+                "1",
+                ""
+              ]
+            },
+            "description": "获取指定ID的图书详情"
+          },
+          "response": []
+        },
+        {
+          "name": "更新图书",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n\t\"description\": \"更新后的图书描述\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/books/1/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "books",
+                "1",
+                ""
+              ]
+            },
+            "description": "更新指定ID的图书信息（需要管理员权限）"
+          },
+          "response": []
+        },
+        {
+          "name": "删除图书",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/books/1/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "books",
+                "1",
+                ""
+              ]
+            },
+            "description": "删除指定ID的图书（需要管理员权限）"
+          },
+          "response": []
+        }
+      ],
+      "description": "图书相关的API测试"
+    },
+    {
+      "name": "借阅管理",
+      "item": [
+        {
+          "name": "获取借阅记录",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/borrow-records/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "borrow-records",
+                ""
+              ]
+            },
+            "description": "获取当前用户的借阅记录"
+          },
+          "response": []
+        },
+        {
+          "name": "申请借阅",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n\t\"book\": 1\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/borrow-records/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "borrow-records",
+                ""
+              ]
+            },
+            "description": "申请借阅指定ID的图书"
+          },
+          "response": []
+        },
+        {
+          "name": "审批借阅",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n\t\"status\": \"borrowed\",\n\t\"return_date\": \"2023-06-30\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/borrow-records/1/approve/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "borrow-records",
+                "1",
+                "approve",
+                ""
+              ]
+            },
+            "description": "审批指定ID的借阅请求（需要管理员权限）"
+          },
+          "response": []
+        },
+        {
+          "name": "申请归还",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/borrow-records/1/return/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "borrow-records",
+                "1",
+                "return",
+                ""
+              ]
+            },
+            "description": "申请归还指定ID的借阅记录对应的图书"
+          },
+          "response": []
+        },
+        {
+          "name": "确认归还",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/borrow-records/1/confirm-return/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "borrow-records",
+                "1",
+                "confirm-return",
+                ""
+              ]
+            },
+            "description": "确认归还指定ID的借阅记录对应的图书（需要管理员权限）"
+          },
+          "response": []
+        },
+        {
+          "name": "检查图书状态",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/borrow-records/check-book-status/?book_id=1",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "borrow-records",
+                "check-book-status",
+                ""
+              ],
+              "query": [
+                {
+                  "key": "book_id",
+                  "value": "1"
+                }
+              ]
+            },
+            "description": "检查指定ID的图书是否可借"
+          },
+          "response": []
+        }
+      ],
+      "description": "借阅相关的API测试"
+    },
+    {
+      "name": "分类管理",
+      "item": [
+        {
+          "name": "获取分类列表",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/categories/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "categories",
+                ""
+              ]
+            },
+            "description": "获取所有图书分类的列表"
+          },
+          "response": []
+        },
+        {
+          "name": "创建新分类",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n\t\"name\": \"测试分类\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/categories/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "categories",
+                ""
+              ]
+            },
+            "description": "创建一个新的图书分类（需要管理员权限）"
+          },
+          "response": []
+        }
+      ],
+      "description": "分类相关的API测试"
+    },
+    {
+      "name": "作者管理",
+      "item": [
+        {
+          "name": "获取作者列表",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/authors/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "authors",
+                ""
+              ]
+            },
+            "description": "获取所有作者的列表"
+          },
+          "response": []
+        },
+        {
+          "name": "创建新作者",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n\t\"name\": \"测试作者\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/authors/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "authors",
+                ""
+              ]
+            },
+            "description": "创建一个新的作者（需要管理员权限）"
+          },
+          "response": []
+        }
+      ],
+      "description": "作者相关的API测试"
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "id": "7d50fb40-8b4d-4f3a-a5fc-d00af01a18e6",
+        "type": "text/javascript",
+        "exec": [
+          ""
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "id": "53bc3a0a-1e8d-4c7a-a0dd-8b3fcecb9e8c",
+        "type": "text/javascript",
+        "exec": [
+          "// 如果是登录请求，则自动保存token",
+          "if (pm.request.url.toString().includes('/api/token/')) {",
+          "    var jsonResponse = pm.response.json();",
+          "    if (jsonResponse.access) {",
+          "        pm.environment.set('access_token', jsonResponse.access);",
+          "        console.log('Access token saved');",
+          "    }",
+          "}"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "id": "5c4d83b2-b8c3-414a-92c0-dc14c323c9a9",
+      "key": "base_url",
+      "value": "http://localhost:8000",
+      "type": "string"
+    }
+  ]
+} 
