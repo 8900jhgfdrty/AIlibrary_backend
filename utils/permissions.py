@@ -7,65 +7,50 @@ from rest_framework import permissions
 from django.core.exceptions import ObjectDoesNotExist
 
 logger = logging.getLogger('permissions')
-
 class RbacPermission(BasePermission):
-    """     """
     message = _("You do not have permission to perform this action")
-
     def has_permission(self, request, view):
-        """检查是否有权限访问当前接口"""
         # 1. get current route information
         router_name = request.resolver_match.view_name
         method = request.method.lower()
-
-        # record access information (for debugging)
-        logger.debug(f"访问: {router_name} - {method} - 用户: {request.user.id if hasattr(request.user, 'id') else '匿名'}")
-
         # for whitelist views and OPTIONS requests, directly pass
         if method == 'options':
             return True
-            
         # for safe methods (GET, HEAD, OPTIONS), directly pass
         if method in ['get', 'head', 'post', 'options']:
             return True
-
         # if there is no authenticated user, reject access
         if not hasattr(request.user, 'id'):
             return False
-
         # 2. super admin has all permissions
         if hasattr(request.user, 'is_super') and request.user.is_super:
             return True
-            
         # 3. check user type, librarians and system admins have modification permissions
         if hasattr(request.user, 'user_type'):
-            # check various possible forms of user_type (string or number)
-            user_type = request.user.user_type
-            if user_type == 1 or user_type == 2 or user_type == '1' or user_type == '2':
+            # Use str() to standardize comparison, simplify logic
+            user_type = str(request.user.user_type)
+            if user_type in ['1', '2']:
                 return True
-                
         # for PUT/PATCH/DELETE requests, need to check if there is admin permission
         if method in ['put', 'patch', 'delete'] and view.__class__.__name__ in ['BookViewSet', 'AuthorViewSet', 'CategoryViewSet', 'AnnouncementViewSet']:
             return False
             
         # normal users cannot perform modification operations
         return False
-
     def has_object_permission(self, request, view, obj):
         """object-level permission check"""
         # if super admin, has all permissions
         if hasattr(request.user, 'is_super') and request.user.is_super:
             return True
-            
         # if safe method (GET, HEAD, etc.), directly pass
         if request.method.lower() in ['get', 'head', 'options']:
             return True
-            
         # check user type, librarians and system admins have modification permissions
         if hasattr(request.user, 'user_type'):
-            user_type = request.user.user_type
+            # Use str() to standardize comparison, simplify logic
+            user_type = str(request.user.user_type)
             # librarian (1) or system admin (2) has modification permissions for books, authors, categories
-            if user_type == 1 or user_type == 2 or user_type == '1' or user_type == '2':
+            if user_type in ['1', '2']:
                 # allow admin to modify books, authors, categories and announcements
                 if isinstance(obj, (models.Book, models.Author, models.Category, models.Announcement)):
                     return True
@@ -78,8 +63,9 @@ class RbacPermission(BasePermission):
                 
             # if the user is a librarian or system admin, allow access
             if hasattr(request.user, 'user_type'):
-                user_type = request.user.user_type
-                if user_type == 1 or user_type == 2 or user_type == '1' or user_type == '2':
+                # Use str() to standardize comparison, simplify logic
+                user_type = str(request.user.user_type)
+                if user_type in ['1', '2']:
                     return True
             
             return False
@@ -92,8 +78,9 @@ class RbacPermission(BasePermission):
                 
             # invisible announcements can only be seen by admins
             if hasattr(request.user, 'user_type'):
-                user_type = request.user.user_type
-                if user_type == 1 or user_type == 2 or user_type == '1' or user_type == '2':
+                # Use str() to standardize comparison, simplify logic
+                user_type = str(request.user.user_type)
+                if user_type in ['1', '2']:
                     return True
                 
             return False
@@ -116,9 +103,9 @@ class BaseRolePermission(permissions.BasePermission):
         Returns:
             bool: whether the user has the specified role
         """
-        # check user type
+        # check user type - Use string comparison to simplify logic
         if hasattr(user, 'user_type'):
-            if str(user.user_type) == str(role_type) or user.user_type == role_type:
+            if str(user.user_type) == str(role_type):
                 return True
                 
         # check user roles
@@ -179,7 +166,7 @@ class IsReader(BaseRolePermission):
     message = 'Only readers can perform this action'
     
     def has_permission(self, request, view):
-        # 所有登录用户默认都具有读者权限
+        # All authenticated users have reader permissions by default
         return bool(request.user and request.user.is_authenticated)
 
 class IsSelfOrAdmin(BaseRolePermission):

@@ -21,6 +21,12 @@ class LoginSerializer(serializers.Serializer):
         ]
     )
 class RatingSerializer(serializers.ModelSerializer):
+    score = serializers.IntegerField(min_value=1, max_value=5, error_messages={
+        'min_value': 'Rating must be between 1 and 5',
+        'max_value': 'Rating must be between 1 and 5',
+        'invalid': 'Rating must be an integer'
+    })
+    
     class Meta:
         model = Rating
         fields = ['id', 'user', 'book', 'score', 'comment', 'created_at']
@@ -28,20 +34,20 @@ class RatingSerializer(serializers.ModelSerializer):
             UniqueTogetherValidator(
                 queryset=Rating.objects.all(),
                 fields=['user', 'book'],
-                message='您已经对该图书进行过评分'
+                message='You have already rated this book'
             )
         ]
-
+        
     def validate(self, attrs):
-        """自定义验证逻辑"""
+        """Custom validation logic"""
         user = attrs.get('user')
         book = attrs.get('book')
         
-        # 检查是否已经评分过
+        # Check if the user has already rated the book
         if Rating.objects.filter(user=user, book=book).exists():
             existing_rating = Rating.objects.get(user=user, book=book)
             raise serializers.ValidationError({
-                'message': '您已经对该图书进行过评分',
+                'message': 'You have already rated this book',
                 'data': {
                     'book_id': book.id,
                     'previous_score': existing_rating.score,
@@ -193,6 +199,14 @@ class AuthorSerializer(serializers.ModelSerializer):
 
 class UserSerializer(serializers.ModelSerializer):
     """User info serializer"""
+    formatted_last_login = serializers.SerializerMethodField(read_only=True)
+    
     class Meta:
         model = User
         fields = '__all__'
+        
+    def get_formatted_last_login(self, obj):
+        """Return formatted last login time"""
+        if obj.last_login:
+            return obj.last_login.strftime('%Y-%m-%d %H:%M:%S')
+        return None

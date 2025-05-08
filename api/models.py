@@ -47,20 +47,22 @@ class Menu(models.Model):
     def __str__(self):
         return self.title
 
+class UserType(models.IntegerChoices):
+    READER = 0, 'Reader'
+    LIBRARIAN = 1, 'Librarian'
+    SYSTEM_ADMIN = 2, 'System Administrator'
 
 class User(models.Model):
-    """User table"""
-    USER_TYPE_CHOICES = (
-        (0, 'Reader'),
-        (1, 'Librarian'),
-        (2, 'System Administrator'),
-    )
+    user_type = models.IntegerField(
+    choices=UserType.choices, 
+    default=UserType.READER,
+    verbose_name="User Type")
 
     username = models.CharField(verbose_name="Username", max_length=32)
     password = models.CharField(verbose_name="Password", max_length=64)
     is_super = models.BooleanField(verbose_name="Is Superuser", default=False)
     roles = models.ManyToManyField(verbose_name="Roles", to="Role", blank=True)
-    user_type = models.CharField(choices=USER_TYPE_CHOICES, max_length=100, verbose_name="User Type", default=0)
+    user_type = models.IntegerField(choices=UserType.choices, default=UserType.READER, verbose_name="User Type")
     is_active = models.BooleanField(verbose_name="Is Active", default=True)
     last_login = models.DateTimeField(verbose_name="Last Login", blank=True, null=True)
 
@@ -73,20 +75,20 @@ class User(models.Model):
     def __str__(self):
         return f"{self.username} - {self.get_user_type_display()}"
 
-# 将这两个方法添加在这里
+    # Add these two methods here
     @property
     def is_authenticated(self):
         """
-        始终返回True。用于区分已认证的用户和AnonymousUser
-        这是Django认证系统所必需的
+        Always return True. Used to distinguish authenticated users from AnonymousUser
+        This is required by Django authentication system
         """
         return True
     
     @property
     def is_anonymous(self):
         """
-        始终返回False。用于区分已认证的用户和AnonymousUser
-        这是Django认证系统所必需的
+        Always return False. Used to distinguish authenticated users from AnonymousUser
+        This is required by Django authentication system
         """
         return False
 

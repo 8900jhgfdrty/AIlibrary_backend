@@ -3,7 +3,7 @@ import jwt
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
-from rest_framework import viewsets
+# from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from django.utils import timezone
@@ -21,9 +21,6 @@ from utils.view import MineApiViewSet, MineModelViewSet
 from utils.permissions import IsLibrarian, IsSystemAdmin, IsLibrarianOrSystemAdmin, IsReader, IsSelfOrAdmin, RbacPermission
 from utils.decorators import role_required, librarian_required, system_admin_required, reader_required
 import pandas as pd
-from sklearn.linear_model import LinearRegression
-import numpy as np
-from django.db.models import Count, Q, Avg, Sum, F
 from datetime import datetime, timedelta
 from django.utils.timezone import make_aware
 from .models import BorrowRecord, User
@@ -47,16 +44,17 @@ from statsmodels.tsa.arima.model import ARIMA
 from statsmodels.tsa.seasonal import seasonal_decompose
 from sklearn.ensemble import IsolationForest
 import pandas as pd
-from django.db.models import Avg
+from django.db.models import Avg, Count
+from django.db.models import Q, F, Sum
+import pytz
+import warnings
+import numpy as np
 
-charts_dir = os.path.join('media', 'charts')
-if not os.path.exists(charts_dir):
-    os.makedirs(charts_dir)
+from django.db.models import Count 
 
 class LoginView(MineApiViewSet):
     authentication_classes = []
     permission_classes = []  # No authentication required for login interface
-
     @swagger_auto_schema(
         request_body=LoginSerializer,  # Request body serializer
         responses={
@@ -69,21 +67,21 @@ class LoginView(MineApiViewSet):
                                       'message': openapi.Schema(type='array', items=openapi.Schema(type='string'))
                                   }))
         },
-        security=[],  # No authentication required for this endpoint
+        security=[],
         operation_summary="User login and get JWT Token",
         operation_description="Login with username and password, returns a JWT Token if successful"
     )
     def post(self, request):
-        # 1. Form validation
         ser = LoginSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
-
-        # 2. Username and password validation
         user_object = User.objects.filter(**ser.data).first()
         if not user_object:
-            raise ValidationError({'message': ["Invalid username or password"]})
+            raise ValidationError({'message': ["Invalid username or password or user_type"]})
+        
 
-        # 3. Generate JWT token
+        user_object.last_login = timezone.now()
+        user_object.save(update_fields=['last_login'])
+        
         token = jwt.encode(
             payload={
                 'id': user_object.id,
@@ -99,8 +97,6 @@ class LoginView(MineApiViewSet):
                 'alg': 'HS256'
             }
         )
-
-        # 4. Get user permissions and build permission dictionary
         try:
             if user_object.is_super:
                 all_permissions = Permission.objects.all()
@@ -282,9 +278,8 @@ class BookViewSet(MineModelViewSet):
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend]
     filterset_fields = {
-        'title': ['exact', 'icontains'],
-        'category': ['exact'],  # Changed from category__id to category
-        'author': ['exact']     # Changed from author__id to author
+        'title': ['icontains'],  
+        'category': ['exact']
     }
     
     @librarian_required
@@ -375,14 +370,11 @@ class BookViewSet(MineModelViewSet):
         
         # Get filter parameters
         category = self.request.query_params.get('category', None)
-        author = self.request.query_params.get('author', None)
         title = self.request.query_params.get('title', None)
         
         # Apply filters if parameters are provided
         if category:
             queryset = queryset.filter(category_id=category)
-        if author:
-            queryset = queryset.filter(author_id=author)
         if title:
             queryset = queryset.filter(title__icontains=title)
             
@@ -397,7 +389,7 @@ class BorrowRecordViewSet(MineModelViewSet):
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['status']
     permission_classes = [RbacPermission]
-    
+    http_method_names = ['get', 'post', 'delete', 'head', 'options']
     def get_permissions(self):
         """
         Return different permissions based on different operations
@@ -441,178 +433,54 @@ class BorrowRecordViewSet(MineModelViewSet):
             
         return queryset
     
-    def perform_create(self, serializer):
-        """When creating a borrow record, automatically associate with the current user and set initial status to pending"""
-        # Get current user
-        user = self.request.user
+    @reader_required
+    def create(self, request, *args, **kwargs):
+        """When creating a borrow record"""
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
         
-        # Check if user is authenticated (by checking if they have an id attribute or if their type is our User model)
-        if hasattr(user, 'id') and user.id is not None:
-            # Set initial status to pending (awaiting approval)
-            record = serializer.save(user_id=user.id, status='pending')
+        auth_user = self.request.user
+        if hasattr(auth_user, 'id') and auth_user.id is not None:
+            try:
+                # Find user instance in database by ID
+                db_user = User.objects.get(id=auth_user.id)
+                # Set initial status to pending (waiting for approval)
+                record = serializer.save(user=db_user, status='pending')
+            except User.DoesNotExist:
+                # If user does not exist in database, only use status
+                record = serializer.save(status='pending')
         else:
-            # Otherwise use the user_id from the request data, still set status to pending
+            # Otherwise, use user_id in request data, still set status to pending
             record = serializer.save(status='pending')
             
-        # Return a message to inform the frontend of "Borrow request submitted, awaiting approval"
+        headers = self.get_success_headers(serializer.data)
+        
+    
         return Response({
             "message": "Borrow request submitted successfully, awaiting admin approval",
-            "status": "pending",
-            "status_description": "Borrow request pending approval", 
-            "button_text": "Pending",
-            "book_id": record.book.id,
-            "book_title": record.book.title,
             "success": True,
-            "action": "borrow_request"
-        }, status=status.HTTP_201_CREATED)
-    
-    @reader_required
-    def update(self, request, *args, **kwargs):
-        """
-        Update a borrow record
-        """
-        # Get object
-        instance = self.get_object()
-        
-        # Get user
-        user = request.user
-        
-        # Check if user is admin
-        is_librarian = False
-        if hasattr(user, 'user_type') and (user.user_type == 1 or str(user.user_type) == '1' or user.user_type == 2 or str(user.user_type) == '2'):
-            is_librarian = True
-        if not is_librarian and hasattr(user, 'roles'):
-            if any(role in ['librarian', 'system_admin'] for role in user.roles):
-                is_librarian = True
-        
-        # Get admin status from frontend parameters
-        is_admin_param = request.query_params.get('is_admin', 'false').lower() == 'true'
-        if is_admin_param:
-            is_librarian = True
-        
-        # Non-administrators can only modify their own records
-        if not is_librarian and instance.user.id != user.id:
-            return Response({"error": "Only borrower or admin can modify this record"}, status=status.HTTP_403_FORBIDDEN)
-        
-        # For other update operations, use default update logic
-        return super().update(request, *args, **kwargs)
-
-    @action(detail=False, methods=['get'], url_path='check-book-status')
-    def check_book_status(self, request):
-        """
-        Check the borrowing status of a specific book for the current user
-        """
-        # Get current user and requested book ID
-        user = request.user
-        # Support getting book_id from both request body and URL query parameters
-        book_id = request.data.get('book_id') or request.query_params.get('book_id')
-        
-        if not book_id:
-            return Response({"error": "Book ID must be provided"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Status description mapping - user-friendly description text
-        status_descriptions = {
-            'pending': 'Your borrow request is awaiting admin approval',
-            'borrowed': 'You have successfully borrowed this book',
-            'returned': 'You have returned this book',
-            'rejected': 'Your borrow request has been rejected',
-            'approval': 'Your return request is awaiting admin approval'  # Add return request status description
-        }
-        
-        # Button text mapping - text to display on buttons for different statuses
-        button_texts = {
-            'pending': 'Pending',
-            'borrowed': 'Borrowed',
-            'returned': 'Borrow',
-            'rejected': 'Borrow',
-            'available': 'Borrow',
-            'approval': 'Pending Return'  # Add return request status button text
-        }
-        
-        # Check if user is authenticated
-        if hasattr(user, 'id') and user.id is not None:
-            latest_record = BorrowRecord.objects.filter(
-                user_id=user.id,
-                book_id=book_id
-            ).order_by('-borrow_date').first()
-            
-            if latest_record:
-                record_status = latest_record.status
-                
-                # If the latest record is "returned" or "rejected" status, and is an older record, consider it available for borrowing
-                if record_status in ['returned', 'rejected']:
-                        return Response({
-                            "book_id": book_id,
-                            "status": "available",
-                            "status_description": "This book is available for borrowing",
-                            "button_text": "Borrow",
-                            "can_borrow": True
-                        })
-                
-                response_data = {
-                    "book_id": book_id,
-                    "status": record_status,
-                    "record_id": latest_record.id,
-                    "borrow_date": latest_record.borrow_date,
-                    "status_description": status_descriptions.get(record_status, "Unknown status"),
-                    "button_text": button_texts.get(record_status, "Borrow"),
-                    "can_borrow": record_status in ['returned', 'rejected'],
-                }
-                
-                # If there's a return date and status is borrowed, show return date
-                if latest_record.return_date and record_status == 'borrowed':
-                    response_data["return_date"] = latest_record.return_date
-                    response_data["expected_return_date"] = latest_record.return_date
-                    # Calculate days remaining
-                    today = timezone.now().date()
-                    return_date = latest_record.return_date.date()
-                    days_remaining = (return_date - today).days
-                    response_data["days_remaining"] = days_remaining 
-                    response_data["return_date_info"] = f"Should be returned before {return_date.strftime('%Y-%m-%d')}"
-                
-                return Response(response_data)
-            
-        # If no record or user is not authenticated, the book is available for borrowing
-        return Response({
-            "book_id": book_id,
-            "status": "available",
-            "status_description": "This book is available for borrowing",
-            "button_text": "Borrow",
-            "can_borrow": True
-        })
-    
-    @action(detail=False, methods=['get'], url_path='pending-approvals')
-    def pending_approvals(self, request):
-        """
-        Get all pending borrow requests
-        """
-        pending_records = BorrowRecord.objects.filter(status='pending').order_by('-borrow_date')
-        
-        page = self.paginate_queryset(pending_records)
-        if page is not None:
-            serializer = self.get_serializer(page, many=True)
-            data = serializer.data
-            for record in data:
-                record['has_approve_buttons'] = True
-                record['approve_url'] = f"/api/borrow-records/{record['id']}/approve/"
-                record['can_approve'] = True
-            
-            paginated_response = self.get_paginated_response(data)
-            paginated_response.data['is_approval_list'] = True
-            return paginated_response
-        
-        serializer = self.get_serializer(pending_records, many=True)
-        data = serializer.data
-        for record in data:
-            record['has_approve_buttons'] = True
-            record['approve_url'] = f"/api/borrow-records/{record['id']}/approve/"
-            record['can_approve'] = True
-        
-        return Response({
-            "results": data,
-            "is_approval_list": True,
-            "count": len(data)
-        })
+            "record_id": record.id,
+            "book": {
+                "id": record.book.id,
+                "title": record.book.title
+            },
+            "borrower": {
+                "id": record.user.id,
+                "username": record.user.username,
+                "type": str(record.user.user_type)
+            },
+            "status": {
+                "code": "pending",
+                "display": "Pending Approval",
+                "color": "orange"
+            },
+            "dates": {
+                "borrow": record.borrow_date,
+                "return": record.return_date,
+                "is_overdue": False,
+                "days_remaining": None
+            }
+        }, status=status.HTTP_201_CREATED, headers=headers)
     
     @reader_required
     @action(detail=True, methods=['post'], url_path='return')
@@ -640,9 +508,6 @@ class BorrowRecordViewSet(MineModelViewSet):
         except BorrowRecord.DoesNotExist:
             return Response({"error": "Borrow record does not exist"}, 
                         status=status.HTTP_404_NOT_FOUND)
-    @reader_required
-    def create(self, request, *args, **kwargs):
-        return super().create(request, *args, **kwargs)
 
     @action(detail=True, methods=['post'], url_path='approve')
     def approve_borrow(self, request, pk=None):
@@ -711,39 +576,175 @@ class BorrowRecordViewSet(MineModelViewSet):
             return Response({"error": "Borrow record does not exist", "success": False}, 
                         status=status.HTTP_404_NOT_FOUND)
 
-    def partial_update(self, request, *args, **kwargs):
+    @swagger_auto_schema(
+        method='get',
+        manual_parameters=[
+            openapi.Parameter(
+                'book_id',
+                openapi.IN_QUERY,
+                description="Check the borrowing status of a specific book for the current user",
+                type=openapi.TYPE_INTEGER,
+                required=False
+            )
+        ],
+        responses={
+            200: openapi.Response('book status', BorrowRecordSerializer(many=False)),
+            400: 'invalid request (missing book_id or book_id is invalid)',
+            401: 'unauthorized access',
+            404: 'not found (book does not exist or record does not exist)'
+        },
+        operation_summary="check book status",
+        operation_description="check the borrowing status of a specific book for the current user"
+    )
+    @action(detail=False, methods=['get'], url_path='check-book-status')
+    def check_book_status(self, request):
         """
-        Partial update of borrow record
-        - Handle return request status change
+        Check the borrowing status of a specific book for the current user
         """
-        # Get object
-        instance = self.get_object()
+        # Get current user and requested book ID
+        user = request.user
+        # Get the book ID from the query parameters
+        book_id_str = request.query_params.get('book_id')
+
+        if not book_id_str:
+            return Response({"error": "Book ID must be provided"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            book_id = int(book_id_str) # Validate if it is a valid integer
+        except ValueError:
+            return Response({"error": "Book ID must be a valid integer"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Status description mapping - user-friendly description text
+        status_descriptions = {
+            'pending': 'Your borrowing request is awaiting approval',
+            'borrowed': 'You have successfully borrowed this book',
+            'returned': 'You have returned this book',
+            'rejected': 'Your borrowing request has been rejected',
+            'approval': 'Your return request is awaiting approval'  # Add return request status description
+        }
+
+        # Button text mapping - text to display on buttons for different statuses
+        button_texts = {
+            'pending': 'Pending',
+            'borrowed': 'Borrowed',
+            'returned': 'Returned',
+            'rejected': 'Rejected',
+            'available': 'Available',
+            'approval': 'Return Processing'  # Add return request status button text
+        }
+
+        # Check if user is authenticated
+        if hasattr(user, 'id') and user.id is not None:
+            latest_record = BorrowRecord.objects.filter(
+                user_id=user.id,
+                book_id=book_id
+            ).order_by('-borrow_date').first()
+
+            if latest_record:
+                record_status = latest_record.status
+
+                # If the latest record is "returned" or "rejected" status, consider it available for borrowing
+                if record_status in ['returned', 'rejected']:
+                        return Response({
+                            "book_id": book_id,
+                            "status": "available",
+                            "status_description": "This book is currently available for borrowing",
+                            "button_text": button_texts['available'],
+                            "can_borrow": True
+                        })
+
+                response_data = {
+                    "book_id": book_id,
+                    "status": record_status,
+                    "record_id": latest_record.id,
+                    "borrow_date": latest_record.borrow_date,
+                    "status_description": status_descriptions.get(record_status, "Unknown status"),
+                    "button_text": button_texts.get(record_status, "Available"),
+                    "can_borrow": record_status in ['returned', 'rejected'], # Only after returning or rejecting can it be borrowed again
+                }
+
+                # If there's a return date and status is borrowed, show return date
+                if latest_record.return_date and record_status == 'borrowed':
+                    response_data["return_date"] = latest_record.return_date
+                    response_data["expected_return_date"] = latest_record.return_date
+                    # Calculate days remaining
+                    today = timezone.now().date()
+                    return_date = latest_record.return_date.date()
+                    days_remaining = (return_date - today).days
+                    response_data["days_remaining"] = days_remaining
+                    response_data["return_date_info"] = f"Should be returned on {return_date.strftime('%Y-%m-%d')}"
+
+                return Response(response_data)
+
+        # If no record found for the user, check if the book exists and is generally available
+        try:
+             book = Book.objects.get(id=book_id) # Check if book exists
+        except Book.DoesNotExist:
+             return Response({"error": f"Book with ID {book_id} not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Book exists, user has no record, so it's available for this user
+        return Response({
+            "book_id": book_id,
+            "status": "available",
+            "status_description": "This book is currently available for borrowing",
+            "button_text": button_texts['available'],
+            "can_borrow": True
+        })
+    
+    @swagger_auto_schema(auto_schema=None)  # Hide this endpoint from Swagger documentation
+    @action(detail=False, methods=['get'], url_path='pending-approvals')
+    def pending_approvals(self, request):
+        """
+        Get all pending borrow requests
+        """
+        pending_records = BorrowRecord.objects.filter(status='pending').order_by('-borrow_date')
         
-        # Handle return request status change
-        if 'status' in request.data and request.data['status'] == 'approval' and instance.status == 'borrowed':
-            instance.status = 'approval'
-            instance.save()
-            return Response({
-                "message": "Return request submitted, awaiting admin confirmation",
-                "status": "approval",
-                "book_id": instance.book.id,
-                "book_title": instance.book.title,
-                "button_text": "Return Processing"
-            })
+        page = self.paginate_queryset(pending_records)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            data = serializer.data
+            for record in data:
+                record['has_approve_buttons'] = True
+                record['approve_url'] = f"/api/borrow-records/{record['id']}/approve/"
+                record['can_approve'] = True
+            
+            paginated_response = self.get_paginated_response(data)
+            paginated_response.data['is_approval_list'] = True
+            return paginated_response
         
-        return super().partial_update(request, *args, **kwargs)
+        serializer = self.get_serializer(pending_records, many=True)
+        data = serializer.data
+        for record in data:
+            record['has_approve_buttons'] = True
+            record['approve_url'] = f"/api/borrow-records/{record['id']}/approve/"
+            record['can_approve'] = True
+        
+        return Response({
+            "results": data,
+            "is_approval_list": True,
+            "count": len(data)
+        })
 
 class RecommendationViewSet(MineModelViewSet):
     """recommendation view set
     """
     queryset = Recommendation.objects.all()
     serializer_class = RecommendationSerializer
-
+    http_method_names = ['get', 'head', 'options']
+    
     def get_queryset(self):
         """only normal users can view their own recommendation results
         """
+        # 检查是否在swagger生成schema时被调用
+        if getattr(self, 'swagger_fake_view', False):
+            # 返回空查询集，避免实际查询数据库
+            return Recommendation.objects.none()
+            
         user = self.request.user
-        return Recommendation.objects.filter(user=user)
+        # 添加用户检查以避免NoneType错误
+        if user and hasattr(user, 'id'):
+            return Recommendation.objects.filter(user_id=user.id)
+        return Recommendation.objects.none()
     
     @system_admin_required
     @action(detail=False, methods=['get'], url_path="popular_books_analysis")
@@ -987,13 +988,56 @@ class RecommendationViewSet(MineModelViewSet):
                 'suggestion': 'More data points may be needed for reliable ARIMA prediction'
             }, status=500)
 
+
+
 class CategoryViewSet(MineModelViewSet):
     """Book Category ViewSet
     """
     queryset = Category.objects.all().order_by('id')
     serializer_class = CategorySerializer
     pagination_class = StandardResultsSetPagination
-
+    
+    def dispatch(self, request, *args, **kwargs):
+        try:
+            if 'pk' in kwargs and not kwargs['pk']:
+                return Response({
+                    'success': False,
+                    'message': 'Category ID cannot be empty',
+                    'errors': {'id': ['This field is required']}
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+            if 'pk' in kwargs:
+                try:
+                    int(kwargs['pk'])
+                except (ValueError, TypeError):
+                    return Response({
+                        'success': False,
+                        'message': 'Invalid category ID format',
+                        'errors': {'id': ['Must be an integer']}
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                    
+            return super().dispatch(request, *args, **kwargs)
+        except Exception as e:
+            if hasattr(e, 'detail'):
+                return Response({
+                    'success': False,
+                    'message': str(e.detail) if hasattr(e.detail, '__str__') else "Request parameter error",
+                    'errors': e.detail
+                }, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                return Response({
+                    'success': False,
+                    'message': f"Request processing failed: {str(e)}"
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                
+    def get_object(self):
+        try:
+            return super().get_object()
+        except Http404:
+            raise ValidationError({
+                'id': [f"Category with ID {self.kwargs.get('pk')} does not exist"]
+            })
+            
     @librarian_required
     def create(self, request, *args, **kwargs):
         return super().create(request, *args, **kwargs)
@@ -1004,7 +1048,42 @@ class CategoryViewSet(MineModelViewSet):
     
     @librarian_required
     def partial_update(self, request, *args, **kwargs):
-        return super().partial_update(request, *args, **kwargs)
+        try:
+            instance = self.get_object()
+            
+            if 'name' not in request.data or not request.data['name']:
+                return Response({
+                    'success': False,
+                    'message': 'Required field is not provided',
+                    'errors': {'name': ['This field is required']}
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+            serializer = self.get_serializer(instance, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            self.perform_update(serializer)
+            
+            return Response({
+                'success': True,
+                'message': 'Category updated successfully',
+                'data': serializer.data
+            })
+            
+        except Http404:
+            return Response({
+                'success': False,
+                'message': 'Category does not exist'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except ValidationError as e:
+            return Response({
+                'success': False,
+                'message': 'Category update failed',
+                'errors': e.detail
+            }, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'message': f'Category update failed: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     @librarian_required
     def destroy(self, request, *args, **kwargs):
@@ -1018,6 +1097,47 @@ class AuthorViewSet(MineModelViewSet):
     queryset = Author.objects.all()
     serializer_class = AuthorSerializer
     pagination_class = StandardResultsSetPagination
+    
+    def dispatch(self, request, *args, **kwargs):
+        try:
+            if 'pk' in kwargs and not kwargs['pk']:
+                return Response({
+                    'success': False,
+                    'message': 'Author ID cannot be empty',
+                    'errors': {'id': ['This field is required']}
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+            if 'pk' in kwargs:
+                try:
+                    int(kwargs['pk'])
+                except (ValueError, TypeError):
+                    return Response({
+                        'success': False,
+                        'message': 'Invalid author ID format',
+                        'errors': {'id': ['Must be an integer']}
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                    
+            return super().dispatch(request, *args, **kwargs)
+        except Exception as e:
+            if hasattr(e, 'detail'):
+                return Response({
+                    'success': False,
+                    'message': str(e.detail) if hasattr(e.detail, '__str__') else "Request parameter error",
+                    'errors': e.detail
+                }, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                return Response({
+                    'success': False,
+                    'message': f"Request processing failed: {str(e)}"
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                
+    def get_object(self):
+        try:
+            return super().get_object()
+        except Http404:
+            raise ValidationError({
+                'id': [f"Author with ID {self.kwargs.get('pk')} does not exist"]
+            })
     
     @librarian_required
     def create(self, request, *args, **kwargs):
@@ -1048,7 +1168,7 @@ class UserViewSet(MineModelViewSet):
         """
         Get all available user types for frontend user creation selection
         """
-        user_types = [{'value': key, 'label': value} for key, value in User.USER_TYPE_CHOICES]
+        user_types = [{'value': key, 'label': value} for key, value in User.user_type.field.choices]
         return Response(user_types)
     
     def create(self, request, *args, **kwargs):
@@ -1145,25 +1265,74 @@ class RatingViewSet(MineModelViewSet):
     """Book Rating and Smart Recommendation ViewSet"""
     serializer_class = RatingSerializer
     queryset = Rating.objects.all()
+    # Limit the allowed HTTP methods
+    http_method_names = ['get', 'post', 'head', 'options']
     
+    def get_allowed_methods(self):
+        allowed_methods = super().get_allowed_methods()
+        if 'POST' not in allowed_methods:
+            allowed_methods.append('POST')
+        return allowed_methods
+        
+    @swagger_auto_schema(
+        method='get',
+        manual_parameters=[
+            openapi.Parameter(
+                'book_id',
+                openapi.IN_QUERY,
+                description="ID of the book to get user's rating for",
+                type=openapi.TYPE_INTEGER,
+                required=True
+            )
+        ],
+        responses={
+            200: openapi.Response('User rating information', 
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'success': openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                        'message': openapi.Schema(type=openapi.TYPE_STRING),
+                        'data': openapi.Schema(
+                            type=openapi.TYPE_OBJECT,
+                            properties={
+                                'score': openapi.Schema(type=openapi.TYPE_INTEGER),
+                                'comment': openapi.Schema(type=openapi.TYPE_STRING),
+                                'created_at': openapi.Schema(type=openapi.TYPE_STRING, format='date-time')
+                            }
+                        )
+                    }
+                )
+            ),
+            400: 'Bad Request - Book ID is missing',
+            401: 'Unauthorized - User not logged in'
+        }
+    )
+    @reader_required
     @action(detail=False, methods=['GET'])
     def get_user_rating(self, request):
-        """Get user's rating for a specific book"""
         try:
+            if getattr(self, 'swagger_fake_view', False):
+                return Response({
+                    'success': True,
+                    'message': 'Swagger schema generation',
+                    'data': None
+                })
+                
             book_id = request.query_params.get('book_id')
             if not book_id:
                 return Response({
                     'success': False,
                     'message': 'Book ID cannot be empty'
                 }, status=status.HTTP_400_BAD_REQUEST)
-            
-            user = request.user
-            if not user or not hasattr(user, 'id'):
+            try:
+                book = Book.objects.get(id=book_id)
+            except Book.DoesNotExist:
                 return Response({
                     'success': False,
-                    'message': 'User not logged in'
-                }, status=status.HTTP_401_UNAUTHORIZED)
+                    'message': 'Book not found'
+                }, status=status.HTTP_404_NOT_FOUND)
             
+            user = request.user
             try:
                 rating = Rating.objects.get(user_id=user.id, book_id=book_id)
                 return Response({
@@ -1188,66 +1357,48 @@ class RatingViewSet(MineModelViewSet):
                 'message': f'Failed to get rating: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
+    @reader_required
     def create(self, request, *args, **kwargs):
-        """Create rating record"""
+        """Create book rating - only allowed for readers"""
         try:
-            # Get user and book ID
             user = request.user
-            if not user or not hasattr(user, 'id'):
-                return Response({
-                    'success': False,
-                    'message': 'User not logged in'
-                }, status=status.HTTP_401_UNAUTHORIZED)
-            
-            # Get request data
             data = request.data.copy()
-            data['user'] = user.id  # Use user ID instead of User object
-            
-            # Parameter validation
-            if not data.get('book') or not data.get('score'):
-                return Response({
-                    'success': False,
-                    'message': 'Book ID and score cannot be empty'
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Validate score range
-            try:
-                score = int(data['score'])
-                if score < 1 or score > 5:
-                    return Response({
-                        'success': False,
-                        'message': 'Score must be between 1-5'
-                    }, status=status.HTTP_400_BAD_REQUEST)
-            except ValueError:
-                return Response({
-                    'success': False,
-                    'message': 'Score must be an integer'
-                }, status=status.HTTP_400_BAD_REQUEST)
+            data['user'] = user.id
             
             # Check if book exists
+            book_id = data.get('book')
+            if not book_id:
+                return Response({
+                    'success': False,
+                    'message': 'Book ID cannot be empty'
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+            # Check if score is an integer
+            if 'score' in data:
+                try:
+                    score = int(data['score'])
+                    data['score'] = score
+                except (ValueError, TypeError):
+                    return Response({
+                        'success': False,
+                        'message': 'Score must be an integer'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                return Response({
+                    'success': False,
+                    'message': 'Score cannot be empty'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Check if book exists in database
             try:
-                book = Book.objects.get(id=data['book'])
+                Book.objects.get(id=book_id)
             except Book.DoesNotExist:
                 return Response({
                     'success': False,
                     'message': 'Book does not exist'
                 }, status=status.HTTP_404_NOT_FOUND)
             
-            # Check if already rated
-            if Rating.objects.filter(user_id=user.id, book_id=book.id).exists():
-                existing_rating = Rating.objects.get(user_id=user.id, book_id=book.id)
-                return Response({
-                    'success': False,
-                    'message': 'You have already rated this book',
-                    'data': {
-                        'book_id': data['book'],
-                        'previous_score': existing_rating.score,
-                        'previous_comment': existing_rating.comment,
-                        'rated_at': existing_rating.created_at
-                    }
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Create new rating
+            # Use serializer to validate and create rating
             serializer = self.get_serializer(data=data)
             serializer.is_valid(raise_exception=True)
             self.perform_create(serializer)
@@ -1259,22 +1410,60 @@ class RatingViewSet(MineModelViewSet):
                 'data': serializer.data
             }, status=status.HTTP_201_CREATED, headers=headers)
             
-        except Exception as e:
-            # Log error
-            print(f"Failed to create rating: {str(e)}")
-            import traceback
-            print(traceback.format_exc())  # Print full error stack
+        except ValidationError as e:
+            errors = e.detail
+            # Check if it is an error that the book has already been rated
+            if isinstance(errors, dict) and 'message' in errors and errors.get('message') == 'You have already rated this book':
+                return Response({
+                    'success': False,
+                    'message': 'You have already rated this book',
+                    'data': errors.get('data', {})
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Handle rating range error
+            if 'score' in errors:
+                return Response({
+                    'success': False,
+                    'message': 'Score must be between 1-5' if '1-5' in str(errors['score'][0]) else 'Score must be an integer'
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+            # Other validation errors
             return Response({
                 'success': False,
-                'message': f'Failed to create rating: {str(e)}'
+                'message': 'Rating submission failed',
+                'errors': errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            # Other exceptions
+            return Response({
+                'success': False,
+                'message': f'Rating creation failed: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     @reader_required
     @action(detail=False, methods=['GET'])
     def recommended_books(self, request):
-        """Get smart recommended book list (top 10)"""
+        # Check if it is called when generating swagger schema
+        if getattr(self, 'swagger_fake_view', False):
+            return Response({
+                'success': True,
+                'message': 'Swagger schema generation',
+                'data': {
+                    'books': [],
+                    'total': 0,
+                    'is_personalized': False
+                }
+            }, status=status.HTTP_200_OK)
+            
         user = request.user
-        # Get all book data
+        # Add user check
+        if not user or not hasattr(user, 'id'):
+            return Response({
+                'success': False,
+                'message': 'User not authenticated',
+                'data': None
+            }, status=status.HTTP_401_UNAUTHORIZED)
+            
         books_queryset = Book.objects.select_related('author', 'category').all()
         total_book_list = [
             {
@@ -1285,14 +1474,10 @@ class RatingViewSet(MineModelViewSet):
                 'description': book.description
             } for book in books_queryset
         ]
-
-        # Call hybrid recommendation algorithm, only pass candidate list and username
         recommended_books = recommendation(
             total_book_list,
             user.username
         )
-
-        # If no recommendations, return the 10 most recently added books
         if not recommended_books:
             latest_books = Book.objects.select_related('author', 'category').order_by('-id')[:10]
             recommended_books = [
@@ -1336,10 +1521,36 @@ class RegisterView(MineApiViewSet):
     )
     def post(self, request):
         """User registration"""
-        serializer = UserSerializer(data=request.data)
+        # Restrict only registering reader accounts
+        user_type = request.data.get('user_type')
+        if user_type is not None and int(user_type) != 0:
+            return Response({
+                "success": False,
+                "message": "Registration failed",
+                "errors": {
+                    "user_type": ["Only reader accounts can be registered"]
+                }
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if username already exists
+        username = request.data.get('username')
+        if username and User.objects.filter(username=username).exists():
+            return Response({
+                "success": False,
+                "message": "Registration failed",
+                "errors": {
+                    "username": ["This username already exists, please use another username"]
+                }
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
+        # Create a copy of the request data to ensure user_type is set to 0
+        data = request.data.copy()
+        data['user_type'] = 0  # Force set to reader type
+        
+        serializer = UserSerializer(data=data)
         
         if serializer.is_valid():
-            # Set user as reader role and ensure account is active
+            # Set user role to reader and ensure account activation
             user = serializer.save(user_type=0, is_active=True)  # 0 represents reader
             
             # Assign reader role
@@ -1347,7 +1558,8 @@ class RegisterView(MineApiViewSet):
                 reader_role = Role.objects.get(name='Reader')
                 user.roles.add(reader_role)
             except Role.DoesNotExist:
-                pass  # If role does not exist, choose to create or ignore
+                print("Warning: 'Reader' role does not exist")
+                # Do not return an error if the role does not exist, just do not assign the role
             
             return Response({
                 "success": True,

@@ -11,21 +11,36 @@ from utils.permissions import RbacPermission
 
 
 def handle_exception(exc, context):
+    """
+    全局异常处理函数，转换各类异常为标准API响应格式
+    """
     if isinstance(exc, ValidationError):
-        # Form validation error
+        # 表单验证错误
         exc.ret_code = 2001
-        exc.status_code = status.HTTP_200_OK
+        # 错误码保持400
     elif isinstance(exc, AuthenticationFailed):
-        # Authentication failed
+        # 身份验证失败
         exc.ret_code = 2002
-        exc.status_code = status.HTTP_200_OK
+        # 错误码保持401
     elif isinstance(exc, PermissionDenied):
-        # No permission to access
+        # 无权限访问
         exc.ret_code = 2003
-        exc.status_code = status.HTTP_200_OK
+        # 错误码保持403
     elif isinstance(exc, Http404):
+        # 如果是路径参数问题，提供更友好的错误信息
+        request = context.get('request')
+        view = context.get('view')
+        
+        if request and view and hasattr(view, 'basename'):
+            resource_name = view.basename.replace('-', ' ').title()
+            resource_id = request.parser_context.get('kwargs', {}).get('pk', 'unknown')
+            detail = f"{resource_name} with ID {resource_id} does not exist"
+        else:
+            detail = "Resource not found"
+            
         exc.ret_code = 3001
-        exc.status_code = status.HTTP_200_OK
+        exc.detail = detail
+        # 错误码保持404
 
     if isinstance(exc, APIException):
         headers = {}
@@ -35,13 +50,18 @@ def handle_exception(exc, context):
             headers['Retry-After'] = '%d' % exc.wait
 
         exc_code = getattr(exc, 'ret_code', -1)
-        data = {'code': exc_code, 'detail': exc.detail}
+        
+        # 确保错误响应格式一致
+        if isinstance(exc.detail, dict) and 'errors' not in exc.detail:
+            data = {'code': exc_code, 'success': False, 'message': "Request validation failed", 'errors': exc.detail}
+        else:
+            data = {'code': exc_code, 'success': False, 'message': str(exc.detail) if isinstance(exc.detail, str) else "Request failed", 'errors': {'detail': exc.detail} if not isinstance(exc.detail, dict) else exc.detail}
 
         set_rollback()
         return Response(data, status=exc.status_code, headers=headers)
 
-    # For uncaught exceptions
-    data = {'code': -1, 'detail': str(exc)}
+    # 处理未捕获的异常
+    data = {'code': -1, 'success': False, 'message': "An unexpected error occurred", 'errors': {'detail': str(exc)}}
     return Response(data, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class BaseViewMixin:
@@ -50,8 +70,18 @@ class BaseViewMixin:
         # If this is an exception response, return it directly
         if response.exception:
             return response
-        response.data = {"code": 0, "data": response.data}
-        response.status_code = status.HTTP_200_OK
+            
+        # 包装数据，为非200状态码添加错误代码
+        if response.status_code >= 400:
+            # 对于错误响应，使用非零错误码
+            error_code = response.status_code  # 使用HTTP状态码作为错误码
+            response.data = {"code": error_code, "data": response.data}
+        else:
+            # 对于成功响应，使用0作为成功码
+            response.data = {"code": 0, "data": response.data}
+        
+        # 保留原始状态码，不再统一设为200
+        # response.status_code = status.HTTP_200_OK
         return response
 
 
